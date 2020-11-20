@@ -1,11 +1,11 @@
 import org.junit.Assert;
 import org.junit.Test;
 
-public class GenerateGraph {
+public class GenerateDot {
     public void test(String dict)  {
         String project_target = "./ClassicAutomatedTesting/"+dict+"/target";
         try{
-            Selection.dotToPaint(project_target,dict);
+            Selection.generateDot(project_target,dict);
         }catch (Exception e){
             e.printStackTrace();
             Assert.fail();
