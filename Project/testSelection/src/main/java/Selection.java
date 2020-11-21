@@ -232,8 +232,8 @@ public class Selection {
         // 获取所有的已改变方法
         ArrayList<String> change_methods = readFileByLines(change_info);
         // 建立筛选的几个分区
-        Queue<CGNode> infected_nodes = new LinkedList<>();
-        ArrayList<CGNode> nodes = new ArrayList<>();
+        LinkedList<CGNode> infected_nodes = new LinkedList<>();
+        LinkedList<CGNode> nodes = new LinkedList<>();
         // 遍历cg中所有的节点
         for(CGNode node: cg) {
             String tmpName = getName(node);
@@ -298,60 +298,47 @@ public class Selection {
     }
 
     // 类粒度选择的受影响测试方法的签名集合
-    public static ArrayList<String> class_selection(CHACallGraph cg,Queue<CGNode> infected_nodes,ArrayList<CGNode> nodes,ArrayList<String> testClassNames){
-        //获取潜在的被选择节点的签名
-        ArrayList<String> nodeNames = new ArrayList<>();
-        for(CGNode node: nodes){
-            nodeNames.add(getName(node));
-        }
+    public static ArrayList<String> class_selection(CHACallGraph cg,LinkedList<CGNode> infected_nodes,LinkedList<CGNode> nodes,ArrayList<String> testClassNames){
+        ArrayList<String> selected_tests = new ArrayList<>();
 
-        nodes.addAll(infected_nodes);//加上infected_nodes后nodes表示全部application节点
-        LinkedHashMap<String,LinkedList<String>> classRelation = makeGraph(cg,nodes,0);//构建类粒度的哈希表
-
-        // 构建被影响的类的类名集合
-        Queue<String> infected_classes = new LinkedList<>();
-        for(CGNode node: infected_nodes){
-            String className = getName(node).split(" ")[0];
-            if(!infected_classes.contains(className)){
-                infected_classes.add(className);
-            }
-        }
-
-        // 构建所有的application类的类名集合
-        ArrayList<String> classNames = new ArrayList<>();
-        for(String name:classRelation.keySet()){
-            if(!infected_classes.contains(name)){
-                classNames.add(name);
-            }
-        }
-
-        // 获取要选择的测试类的类名
-        ArrayList<String> selected_test_class = new ArrayList<>();
-        String tmpClass = null; //以下为类名集合不断被被影响的类名污染的过程
-        while(!classNames.isEmpty()&&(tmpClass=infected_classes.poll())!=null){//没有受害者或没有污染源时停止
-            LinkedList<String> pres = classRelation.get(tmpClass);
-            for(int i=0;i<pres.size();i++){//队列中的每一个污染源都可以由被它污染的且在nodes中的节点代替，这个迭代保证nodes节点渐少
-                String victim = pres.get(i);
-                if(classNames.contains(victim)){//当污染源成功影响到集合中的节点时
-                    if(!classNames.remove(victim)){//移除该节点
-                        System.out.println("remove name from classNames fail");
-                    }
-                    if(isTestClass(victim,testClassNames)){//若该被影响的节点为测试类，则记录
-                        selected_test_class.add(victim);
-                    }
-                    if(!classRelation.get(victim).isEmpty()){//被影响到的节点可以作为新的污染源加入队列
-                        infected_classes.add(victim);
-                    }
+        //确保只要infect_nodes中出现一个被影响类就始终包该被影响类的全部方法（闭包）
+        int init_size = infected_nodes.size();
+        for(int i=0;i<init_size;i++){//对于队列中每一个污染源方法，将方法所在类下的所有方法加入队列
+            String infetctedClassName = getName(infected_nodes.get(i)).split(" ")[0];
+            for(int j=0;j<nodes.size();){
+                String tmpClassName = getName(nodes.get(j)).split(" ")[0];
+                if(infetctedClassName.equals(tmpClassName)){
+                    infected_nodes.add(nodes.remove(j));
+                }else {
+                    j++;
                 }
             }
         }
 
-        // 通过要选择的测试类的类名获取要选择的测试方法
-        ArrayList<String> selected_tests = new ArrayList<>();
-        for(String tmpName: nodeNames){
-            if(selected_test_class.contains(tmpName.split(" ")[0])){
-                if(!tmpName.contains("init")){//不考虑初始化方法
-                    selected_tests.add(tmpName);
+        // 获取被影响到的测试方法
+        CGNode tmpNode = null; //以下为类名集合不断被被影响的类名污染的过程
+        while((tmpNode=infected_nodes.poll())!=null){//没有污染源时停止
+            String name = getName(tmpNode);
+            String className = name.split(" ")[0];//className不可能为null，因为tmpNode属于在classHierarchyAnalysis里筛选过的那批节点
+            if(isTestClass(className,testClassNames)){//若该被影响的节点属于测试类，则记录该方法
+                if(!name.contains("init")){//不考虑初始化方法
+                    selected_tests.add(name);
+                }
+            }
+            Iterator<CGNode> pres = cg.getPredNodes(tmpNode);
+            while(pres.hasNext()){//对于队列中每一个污染源方法的前继方法，将方法所在类下的所有方法加入队列
+                String victimName = getName(pres.next());
+                if(victimName!=null){
+                    String victimClassName = victimName.split(" ")[0];
+                    for(int i=0;i<nodes.size();){
+                        String tmpClassName = getName(nodes.get(i)).split(" ")[0];
+                        if(victimClassName.equals(tmpClassName)){
+                            infected_nodes.add(nodes.get(i));
+                            nodes.remove(i);
+                        }else {
+                            i++;
+                        }
+                    }
                 }
             }
         }
@@ -359,27 +346,28 @@ public class Selection {
     }
 
     // 方法粒度选择的受影响测试方法的签名集合
-    public static ArrayList<String> method_selection(CHACallGraph cg,Queue<CGNode> infected_nodes,ArrayList<CGNode> nodes,ArrayList<String> testClassNames){
+    public static ArrayList<String> method_selection(CHACallGraph cg,LinkedList<CGNode> infected_nodes,LinkedList<CGNode> nodes,ArrayList<String> testClassNames){
         ArrayList<String> selected_tests = new ArrayList<>();
         // 获取被影响到的测试方法
         CGNode tmpNode = null; //以下为类名集合不断被被影响的类名污染的过程
-        while(!nodes.isEmpty()&&(tmpNode=infected_nodes.poll())!=null){//没有受害者或没有污染源时停止
+        while((tmpNode=infected_nodes.poll())!=null){//没有污染源时停止
+            String tmpName = getName(tmpNode);//tmpName不可能为null，因为infected_nodes和nodes都在classHierarchyAnalysis里筛选过
+            if(isTestClass(tmpName.split(" ")[0],testClassNames)){//若该被影响的节点属于测试类，则记录
+                if(!tmpName.contains("init")){//不考虑初始化方法
+                    selected_tests.add(tmpName);
+                }
+            }
+
             Iterator<CGNode> pres = cg.getPredNodes(tmpNode);
             while(pres.hasNext()){//队列中的每一个污染源都可以由被它污染的且在nodes中的节点代替，这个迭代保证nodes节点渐少
                 CGNode victim = pres.next();
-                if(nodeContain(nodes,victim)){//当污染源成功影响到集合中的节点时
-                    if(!nodes.remove(victim)){//移除该节点
-                        System.out.println("remove node from nodes fail");
-                    }
-                    String tmpName = getName(victim);
-                    if(isTestClass(tmpName.split(" ")[0],testClassNames)){//若该被影响的节点为测试类，则记录
-                        //tmpName不可能为null，因为victim属于nodes，而nodes在classHierarchyAnalysis里筛选过
-                        if(!tmpName.contains("init")){//不考虑初始化方法
-                            selected_tests.add(tmpName);
+                if(getName(victim)!=null){
+                    for(CGNode node:nodes){
+                        if(node.equals(victim)){//当污染源成功影响到集合中的节点时
+                            nodes.remove(victim);//移除该节点
+                            infected_nodes.add(victim);//被影响到的节点可以作为新的污染源加入队列
+                            break;
                         }
-                    }
-                    if(cg.getPredNodeCount(victim)!=0){//被影响到的节点可以作为新的污染源加入队列
-                        infected_nodes.add(victim);
                     }
                 }
             }
